@@ -1,0 +1,24 @@
+# nixpacks.toml - Alternative to Dockerfile for Railway
+# Railway can use this instead of Dockerfile if preferred
+# To use: Remove or rename Dockerfile
+
+[phases.setup]
+nixPkgs = ["nodejs-18_x", "python310", "python310Packages.pip"]
+
+[phases.install]
+cmds = [
+    "cd backend && npm ci --production",
+    "pip install -r requirements.txt"
+]
+
+[phases.build]
+cmds = [
+    "echo 'Build complete'"
+]
+
+[start]
+cmd = "cd backend && node index.js"
+
+[variables]
+NODE_ENV = "production"
+PORT = "5000"

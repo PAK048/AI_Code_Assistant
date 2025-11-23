@@ -1,0 +1,96 @@
+# Frontend files and directories (EXCLUDED from backend deployment)
+frontend/
+.next/
+out/
+
+# Node modules (will be installed during build)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Environment files (use Railway dashboard for variables)
+.env
+.env.local
+.env.*.local
+.env.development
+.env.test
+.env.production
+
+# Logs
+logs/
+*.log
+
+# Testing
+coverage/
+.nyc_output/
+tests/
+sandbox/tests/
+
+# Documentation (optional, can be included for RAG)
+# docs/
+
+# Deployment configs for other platforms
+vercel.json
+.vercel/
+deploy-vercel.sh
+netlify.toml
+
+# Generated content
+Generated_Content/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Database files (use cloud databases)
+*.db
+*.sqlite
+*.sqlite3
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Miscellaneous
+*.md.backup
+vamos.txt
+vamoss.txt

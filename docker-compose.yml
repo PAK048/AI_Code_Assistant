@@ -1,0 +1,44 @@
+services:
+  mongodb:
+    image: mongo
+    restart: always
+    ports:
+      - '27017:27017'
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+    volumes:
+      - mongodb_data_v2:/data/db
+    networks:
+      - codeecho-network
+
+  runner:
+    build:
+      context: ./runner
+      dockerfile: Dockerfile
+    container_name: codeecho-runner
+    working_dir: /sandbox
+    volumes:
+      - ./sandbox:/sandbox
+    stdin_open: true
+    tty: true
+    networks:
+      - codeecho-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: codeecho-qdrant
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - codeecho-network
+
+networks:
+  codeecho-network:
+    driver: bridge
+
+volumes:
+  mongodb_data_v2:
+  qdrant_storage:

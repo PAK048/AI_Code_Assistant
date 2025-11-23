@@ -1,0 +1,149 @@
+agents:
+  - name: coordinator_agent
+    description: Central planner that sequences tasks across all other agents.
+    inputs:
+      - transcript
+      - session_id
+    outputs:
+      - plan_steps
+      - approvals_required
+    tools:
+      - intent_parser_agent
+      - retrieval_agent
+      - codegen_agent
+      - file_manager_agent
+      - runner_agent
+      - git_agent
+    permissions:
+      - require_user_confirmation_for_write
+      - require_user_confirmation_for_git
+    safety_rules:
+      - abort_if_intent_confidence_below: 0.4
+      - escalate_to_user_on_error: true
+    failover:
+      on_tool_failure: retry_once_then_notify
+    prompt: |
+      You are the orchestrator. Break tasks into tool calls, wait for user approval when required, and keep a concise audit log.
+
+  - name: intent_parser_agent
+    description: Classifies user intent and extracts structured parameters.
+    inputs:
+      - transcript
+      - recent_history
+    outputs:
+      - intent_type
+      - confidence
+      - targets
+    tools: []
+    permissions:
+      - read_only
+    safety_rules:
+      - emit_unknown_if_confidence_below: 0.5
+    failover:
+      on_parse_error: fallback_to_keyword_matching
+    prompt: |
+      Return JSON with keys type, confidence, targets. Supported types: generate_code, run_command, retrieve_info, git_action.
+
+  - name: retrieval_agent
+    description: Performs RAG lookups against the Qdrant collection.
+    inputs:
+      - query
+      - top_k
+    outputs:
+      - context_chunks
+    tools:
+      - qdrant_search_tool
+    permissions:
+      - read_only
+    safety_rules:
+      - sanitize_queries
+    failover:
+      on_vector_error: return_empty_context
+    prompt: |
+      Use qdrant_search_tool to fetch code/document snippets relevant to the query.
+
+  - name: codegen_agent
+    description: Generates or edits code using watsonx.ai with RAG context.
+    inputs:
+      - user_prompt
+      - context_chunks
+    outputs:
+      - proposed_code
+      - rationale
+    tools:
+      - watsonx_text_generation
+      - file_diff_tool
+    permissions:
+      - write_to_draft_only
+    safety_rules:
+      - include_tests_when_possible
+      - follow_repo_style_guides
+    failover:
+      on_generation_error: reduce_temperature_and_retry
+    prompt: |
+      Produce runnable code with comments. If modifying existing files, emit diff-style output.
+
+  - name: file_manager_agent
+    description: Writes vetted changes into the sandbox with audit logging.
+    inputs:
+      - file_path
+      - content
+      - rationale
+    outputs:
+      - write_status
+      - diff_summary
+    tools:
+      - sandbox_write_tool
+      - sandbox_read_tool
+    permissions:
+      - sandbox_only
+    safety_rules:
+      - reject_if_path_outside_sandbox
+      - require_user_confirmation
+    failover:
+      on_write_error: rollback_and_alert
+    prompt: |
+      Ensure the path is inside chat_gpt/. Provide before/after diff when possible.
+
+  - name: runner_agent
+    description: Executes commands/tests via the runner service and streams logs.
+    inputs:
+      - command
+      - environment
+    outputs:
+      - stdout
+      - stderr
+      - exit_code
+    tools:
+      - runner_execute_tool
+    permissions:
+      - allowlisted_commands_only
+    safety_rules:
+      - enforce_timeouts: 120
+      - mask_secrets_in_logs: true
+    failover:
+      on_timeout: abort_and_notify
+    prompt: |
+      Run commands safely inside the container. Report status frequently.
+
+  - name: git_agent
+    description: Manages git branching, commits, and PR creation.
+    inputs:
+      - branch_name
+      - commit_message
+      - files_changed
+    outputs:
+      - commit_hash
+      - pr_url
+    tools:
+      - git_cli_tool
+      - github_api_tool
+    permissions:
+      - no_force_push
+      - user_approval_required_for_merge
+    safety_rules:
+      - abort_if_unstaged_changes_detected
+    failover:
+      on_push_failure: retry_with_rebase
+    prompt: |
+      Keep commit messages descriptive, reference ticket IDs when available, and never push directly to main without approval.
