@@ -28,7 +28,7 @@ WORKDIR /app
 
 # Copy Python requirements
 COPY requirements.txt ./
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Copy RAG scripts
 COPY rag/ ./rag/
