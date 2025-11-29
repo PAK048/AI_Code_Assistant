@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install"
+buildCommand = "npm install --production --no-package-lock"
 
 [deploy]
 startCommand = "npm start"

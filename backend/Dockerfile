@@ -17,7 +17,7 @@ WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
-RUN npm ci --production
+RUN npm install --production --no-package-lock
 
 # Copy source code
 COPY . .
