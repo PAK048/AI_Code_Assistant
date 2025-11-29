@@ -22,8 +22,10 @@ RUN npm install --production --no-package-lock
 # Copy source code
 COPY . .
 
-# Install Python requirements
-RUN pip3 install --no-cache-dir --break-system-packages -r rag/requirements.txt
+# Install Python requirements if they exist
+RUN if [ -f rag/requirements.txt ]; then \
+  pip3 install --no-cache-dir --break-system-packages -r rag/requirements.txt; \
+  fi
 
 # Create sandbox directory
 RUN mkdir -p /app/sandbox /app/chat_gpt
