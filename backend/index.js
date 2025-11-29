@@ -32,29 +32,70 @@ logger.info("Starting CodeEcho Backend", {
   port: process.env.PORT || 5000,
 });
 
-// Configure CORS origins
+// Configure CORS origins - allow all Vercel preview URLs and production
 const allowedOrigins = process.env.FRONTEND_URL
-  ? [process.env.FRONTEND_URL, "http://localhost:3000", "http://localhost:3001"]
+  ? [
+      process.env.FRONTEND_URL,
+      "http://localhost:3000",
+      "http://localhost:3001",
+      // Add your Vercel domains
+      "https://code-echo-ff2v55hh0-usama-ijazs-projects-12c3c9a3.vercel.app",
+      /https:\/\/.*\.vercel\.app$/, // Allow all Vercel preview deployments
+    ]
   : ["*"];
 
-logger.info("CORS Configuration", { allowedOrigins });
+logger.info("CORS Configuration", {
+  allowedOrigins:
+    typeof allowedOrigins === "object"
+      ? allowedOrigins.filter((o) => typeof o === "string")
+      : allowedOrigins,
+});
+
+// CORS origin function to handle both strings and regex
+const corsOrigin = (origin, callback) => {
+  // Allow requests with no origin (mobile apps, curl, etc)
+  if (!origin) return callback(null, true);
+
+  // Check if origin is allowed
+  const isAllowed = allowedOrigins.some((allowed) => {
+    if (typeof allowed === "string") {
+      return allowed === "*" || allowed === origin;
+    } else if (allowed instanceof RegExp) {
+      return allowed.test(origin);
+    }
+    return false;
+  });
+
+  if (isAllowed) {
+    callback(null, true);
+  } else {
+    logger.warn("CORS blocked request", { origin });
+    callback(new Error("Not allowed by CORS"));
+  }
+};
 
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins.includes("*") ? "*" : allowedOrigins,
-    methods: ["GET", "POST"],
+    origin: corsOrigin,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
   },
 });
 
 // Middleware
 app.use(
   cors({
-    origin: allowedOrigins.includes("*") ? "*" : allowedOrigins,
+    origin: corsOrigin,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     credentials: true,
+    allowedHeaders: ["Content-Type", "Authorization"],
+    exposedHeaders: ["Content-Length", "X-Request-Id"],
+    maxAge: 86400, // 24 hours
   })
 );
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 
 // Request logging middleware
 app.use(requestLoggerMiddleware(logger));
