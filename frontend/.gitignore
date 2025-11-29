@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+.next/
+out/
+dist/
+
+# System files
+.DS_Store
+*.log
+
+# Build cache
+.vscode/
+.env.local
+.env.development
+.env.production
