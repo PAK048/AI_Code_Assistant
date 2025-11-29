@@ -2,6 +2,7 @@ const fs = require("fs").promises;
 const path = require("path");
 const { exec } = require("child_process");
 const { promisify } = require("util");
+const crypto = require("crypto");
 const execAsync = promisify(exec);
 const ProjectHealth = require("../models/ProjectHealth");
 
@@ -9,20 +10,44 @@ class ProjectHealthService {
   /**
    * Analyze project and create/update health record
    */
-  async analyzeProject(userId, projectPath, options = {}) {
+  async analyzeProject(userId, projectData, options = {}) {
+    let projectHealth; // Declare outside try block for catch block access
+    let cleanup = null;
+
     try {
+      // Initialize project (clone if needed)
+      const {
+        projectId,
+        projectPath,
+        source,
+        githubUrl,
+        cleanup: cleanupFn,
+      } = await this.initializeProject(userId, projectData);
+
+      cleanup = cleanupFn;
+
       // Find or create project health record
-      let projectHealth = await ProjectHealth.findOne({ userId, projectPath });
+      projectHealth = await ProjectHealth.findOne({
+        userId,
+        $or: [{ projectId }, { projectPath }],
+      });
 
       if (!projectHealth) {
         projectHealth = new ProjectHealth({
           userId,
+          projectId,
           projectPath,
+          projectSource: source || "upload",
+          githubUrl,
           projectName: path.basename(projectPath),
           analysisStatus: "analyzing",
         });
       } else {
+        // Update existing record
+        projectHealth.projectPath = projectPath; // Update path in case it changed
         projectHealth.analysisStatus = "analyzing";
+        if (source) projectHealth.projectSource = source;
+        if (githubUrl) projectHealth.githubUrl = githubUrl;
       }
 
       await projectHealth.save();
@@ -69,14 +94,30 @@ class ProjectHealthService {
         duplications
       );
 
-      // Generate AI recommendations
-      projectHealth.recommendations =
-        projectHealth.generateRefactoringSuggestions();
+      // Clear existing recommendations first
+      projectHealth.recommendations = [];
+
+      // Generate new recommendations
+      const newRecommendations = this.generateRecommendations(
+        projectHealth,
+        fileMetrics
+      );
+
+      // Add each recommendation individually
+      newRecommendations.forEach((rec) => {
+        projectHealth.recommendations.push(rec);
+      });
 
       projectHealth.lastAnalyzed = new Date();
       projectHealth.analysisStatus = "completed";
 
       await projectHealth.save();
+
+      // Cleanup if needed (e.g. delete cloned repo)
+      // Note: For now we might want to keep it for a bit, but per requirements we should delete
+      if (cleanup) {
+        await cleanup();
+      }
 
       return projectHealth;
     } catch (error) {
@@ -86,6 +127,10 @@ class ProjectHealthService {
         projectHealth.analysisStatus = "failed";
         projectHealth.analysisError = error.message;
         await projectHealth.save();
+      }
+
+      if (cleanup) {
+        await cleanup();
       }
 
       throw error;
@@ -254,14 +299,28 @@ class ProjectHealthService {
 
       // Second pass: Build call relationships
       for (const node of callGraph) {
-        const calls = this.extractFunctionCalls(node);
+        // Get the file content for this node
+        const fullPath = path.join(projectPath, node.filePath);
+        try {
+          const content = await fs.readFile(fullPath, "utf-8");
+          const lines = content.split("\n");
+          const functionContent = lines
+            .slice(node.startLine - 1, node.endLine)
+            .join("\n");
 
-        calls.forEach((calledFunc) => {
-          if (functionMap.has(calledFunc)) {
-            node.calls.push(calledFunc);
-            functionMap.get(calledFunc).calledBy.push(node.functionName);
-          }
-        });
+          const calls = this.extractFunctionCalls(functionContent);
+
+          calls.forEach((calledFunc) => {
+            if (functionMap.has(calledFunc)) {
+              node.calls.push(calledFunc);
+              functionMap.get(calledFunc).calledBy.push(node.functionName);
+            }
+          });
+        } catch (error) {
+          console.error(
+            `Error reading function calls for ${node.filePath}: ${error.message}`
+          );
+        }
       }
 
       // Calculate call depth using DFS
@@ -499,39 +558,75 @@ class ProjectHealthService {
       "build",
       "coverage",
       "__pycache__",
+      ".next",
+      "out",
+      "target",
+      "bin",
+      "obj",
     ];
 
+    try {
+      // Check if projectPath exists
+      await fs.access(projectPath);
+    } catch (error) {
+      console.error(`Project path does not exist: ${projectPath}`);
+      return [];
+    }
+
     async function traverse(dir) {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
+      try {
+        const entries = await fs.readdir(dir, { withFileTypes: true });
 
-      for (const entry of entries) {
-        const fullPath = path.join(dir, entry.name);
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
 
-        if (entry.isDirectory()) {
-          if (!excludeDirs.includes(entry.name)) {
-            await traverse(fullPath);
+          // Skip hidden files and excluded directories
+          if (entry.name.startsWith(".") && entry.name !== ".") {
+            continue;
           }
-        } else {
-          const ext = path.extname(entry.name);
-          if (
-            [
-              ".js",
-              ".jsx",
-              ".ts",
-              ".tsx",
-              ".py",
-              ".java",
-              ".cpp",
-              ".c",
-            ].includes(ext)
-          ) {
-            files.push(fullPath);
+
+          if (entry.isDirectory()) {
+            if (!excludeDirs.includes(entry.name)) {
+              await traverse(fullPath);
+            }
+          } else {
+            const ext = path.extname(entry.name);
+            // Support more file extensions
+            if (
+              [
+                ".js",
+                ".jsx",
+                ".ts",
+                ".tsx",
+                ".py",
+                ".java",
+                ".cpp",
+                ".c",
+                ".h",
+                ".hpp",
+                ".cs",
+                ".go",
+                ".rs",
+                ".rb",
+                ".php",
+              ].includes(ext)
+            ) {
+              files.push(fullPath);
+            }
           }
         }
+      } catch (error) {
+        // Skip directories we can't read
+        console.warn(`Cannot read directory ${dir}: ${error.message}`);
       }
     }
 
-    await traverse(projectPath);
+    try {
+      await traverse(projectPath);
+    } catch (error) {
+      console.error(`Error traversing project: ${error.message}`);
+    }
+
     return files;
   }
 
@@ -561,18 +656,22 @@ class ProjectHealthService {
       "while",
       "case",
       "catch",
-      "&&",
-      "||",
-      "?",
       "switch",
     ];
 
     let complexity = 1;
+
+    // Count keyword-based decision points
     decisionKeywords.forEach((keyword) => {
-      const regex = new RegExp(
-        `\\b${keyword}\\b|${keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-        "g"
-      );
+      const regex = new RegExp(`\\b${keyword}\\b`, "g");
+      const matches = content.match(regex);
+      if (matches) complexity += matches.length;
+    });
+
+    // Count operators separately with proper escaping
+    const operators = ["&&", "||", "\\?"];
+    operators.forEach((op) => {
+      const regex = new RegExp(op, "g");
       const matches = content.match(regex);
       if (matches) complexity += matches.length;
     });
@@ -778,16 +877,22 @@ class ProjectHealthService {
     return functions;
   }
 
-  extractFunctionCalls(node) {
+  extractFunctionCalls(functionBody) {
     const calls = [];
     const callRegex = /(\w+)\s*\(/g;
 
     let match;
-    while ((match = callRegex.exec(node.body || "")) !== null) {
-      calls.push(match[1]);
+    while ((match = callRegex.exec(functionBody)) !== null) {
+      const funcName = match[1];
+      // Filter out common keywords that look like function calls
+      if (
+        !["if", "for", "while", "switch", "catch", "return"].includes(funcName)
+      ) {
+        calls.push(funcName);
+      }
     }
 
-    return calls;
+    return [...new Set(calls)]; // Remove duplicates
   }
 
   calculateCallDepth(callGraph, functionMap) {
@@ -830,10 +935,18 @@ class ProjectHealthService {
   }
 
   /**
-   * Get project health by ID
+   * Get project health by ID (supports both MongoDB _id and custom projectId)
    */
-  async getProjectHealth(projectHealthId) {
-    return await ProjectHealth.findById(projectHealthId);
+  async getProjectHealth(id) {
+    // Try to find by custom projectId first
+    let health = await ProjectHealth.findOne({ projectId: id });
+
+    // If not found and it looks like a Mongo ID, try that
+    if (!health && id.match(/^[0-9a-fA-F]{24}$/)) {
+      health = await ProjectHealth.findById(id);
+    }
+
+    return health;
   }
 
   /**
@@ -879,6 +992,178 @@ class ProjectHealthService {
     }
 
     return projectHealth;
+  }
+
+  /**
+   * Generate recommendations based on file metrics
+   */
+  generateRecommendations(projectHealth, fileMetrics) {
+    const suggestions = [];
+
+    // High complexity files
+    fileMetrics.forEach((file) => {
+      if (file.cyclomaticComplexity > 15) {
+        suggestions.push({
+          type: "refactor",
+          priority: file.cyclomaticComplexity > 25 ? "critical" : "high",
+          filePath: file.filePath,
+          title: `Reduce complexity in ${file.fileName}`,
+          description: `Cyclomatic complexity is ${file.cyclomaticComplexity}. Consider breaking down into smaller functions.`,
+          estimatedEffort: Math.min(file.cyclomaticComplexity * 5, 120),
+          potentialImpact: "Improved maintainability and testability",
+          suggestedAction: "Extract complex logic into separate functions",
+          autoFixAvailable: false,
+          status: "pending", // Add default status
+        });
+      }
+
+      // Low test coverage
+      if (file.testCoverage < 50 && file.linesOfCode > 50) {
+        suggestions.push({
+          type: "test",
+          priority: file.testCoverage < 20 ? "high" : "medium",
+          filePath: file.filePath,
+          title: `Increase test coverage for ${file.fileName}`,
+          description: `Current coverage is ${file.testCoverage}%. Add unit tests for critical paths.`,
+          estimatedEffort: Math.min((100 - file.testCoverage) * 2, 180),
+          potentialImpact: "Reduced defect risk and improved code quality",
+          suggestedAction: "Generate unit tests for uncovered code paths",
+          autoFixAvailable: true,
+          status: "pending",
+        });
+      }
+
+      // Test failures
+      if (file.testFailures && file.testFailures.length > 0) {
+        suggestions.push({
+          type: "fix",
+          priority: "critical",
+          filePath: file.filePath,
+          title: `Fix ${file.testFailures.length} failing test(s) in ${file.fileName}`,
+          description: `Tests are failing: ${file.testFailures
+            .map((t) => t.testName)
+            .join(", ")}`,
+          estimatedEffort: file.testFailures.length * 15,
+          potentialImpact: "Restore code quality and prevent regressions",
+          suggestedAction: "Debug and fix failing tests",
+          autoFixAvailable: false,
+          status: "pending",
+        });
+      }
+
+      // High duplication
+      if (file.duplicationPercentage > 20) {
+        suggestions.push({
+          type: "refactor",
+          priority: "medium",
+          filePath: file.filePath,
+          title: `Remove code duplication in ${file.fileName}`,
+          description: `${file.duplicationPercentage}% of code is duplicated. Consider extracting to shared utilities.`,
+          estimatedEffort: 45,
+          potentialImpact: "Reduced maintenance cost and improved consistency",
+          suggestedAction: "Extract duplicated code to reusable functions",
+          autoFixAvailable: true,
+          status: "pending",
+        });
+      }
+    });
+
+    const sorted = suggestions
+      .sort((a, b) => {
+        const priorityMap = { critical: 4, high: 3, medium: 2, low: 1 };
+        return (priorityMap[b.priority] || 0) - (priorityMap[a.priority] || 0);
+      })
+      .slice(0, 20); // Top 20 suggestions
+
+    // Return plain JavaScript array, not Mongoose document
+    return JSON.parse(JSON.stringify(sorted));
+  }
+
+  /**
+   * Clone a GitHub repository
+   */
+  async cloneRepository(repoUrl) {
+    // Basic validation for GitHub URL
+    if (!repoUrl.match(/^https:\/\/github\.com\/[\w-]+\/[\w.-]+$/)) {
+      throw new Error("Invalid GitHub repository URL");
+    }
+
+    const projectId = crypto.randomBytes(8).toString("hex");
+    const clonePath = path.join(
+      process.cwd(),
+      "temp",
+      "project-health",
+      projectId
+    );
+
+    try {
+      // Ensure temp directory exists
+      await fs.mkdir(path.dirname(clonePath), { recursive: true });
+
+      // Clone repository
+      await execAsync(`git clone --depth=1 ${repoUrl} ${clonePath}`);
+
+      return {
+        projectId,
+        projectPath: clonePath,
+        cleanup: async () => {
+          try {
+            await fs.rm(clonePath, { recursive: true, force: true });
+          } catch (err) {
+            console.error(`Failed to cleanup ${clonePath}:`, err);
+          }
+        },
+      };
+    } catch (error) {
+      console.error("Clone repository error:", error);
+      throw new Error(`Failed to clone repository: ${error.message}`);
+    }
+  }
+
+  /**
+   * Initialize a project for analysis
+   */
+  async initializeProject(userId, projectData) {
+    // Extract projectPath directly, or fallback to path if provided
+    const {
+      source,
+      projectPath,
+      path: altPath,
+      githubUrl,
+      projectId,
+    } = projectData;
+
+    console.log(
+      `[ProjectHealthService] Initializing project. Source: ${source}, GitHub: ${githubUrl}, Path: ${
+        projectPath || altPath
+      }`
+    );
+
+    // Use projectPath if available, otherwise use path (legacy support)
+    const effectivePath = projectPath || altPath;
+
+    let finalPath = effectivePath;
+    let finalProjectId = projectId || crypto.randomBytes(8).toString("hex");
+
+    if (source === "github" && githubUrl) {
+      const cloneResult = await this.cloneRepository(githubUrl);
+      finalPath = cloneResult.projectPath;
+      finalProjectId = cloneResult.projectId;
+    }
+
+    // Ensure project path exists
+    try {
+      await fs.access(finalPath);
+    } catch (error) {
+      throw new Error(`Project path not found: ${finalPath}`);
+    }
+
+    return {
+      projectId: finalProjectId,
+      projectPath: finalPath,
+      source,
+      githubUrl,
+    };
   }
 }
 

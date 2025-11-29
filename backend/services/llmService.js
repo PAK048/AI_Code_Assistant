@@ -1,4 +1,7 @@
 const axios = require("axios");
+const { Logger } = require("../utils/logger");
+
+const logger = new Logger("LLMService");
 
 async function getIAMToken(apiKey) {
   const url = "https://iam.cloud.ibm.com/identity/token";
@@ -8,8 +11,16 @@ async function getIAMToken(apiKey) {
     apikey: apiKey,
   });
 
-  const response = await axios.post(url, data, { headers });
-  return response.data.access_token;
+  logger.debug("Requesting IAM token");
+
+  try {
+    const response = await axios.post(url, data, { headers });
+    logger.debug("IAM token obtained successfully");
+    return response.data.access_token;
+  } catch (error) {
+    logger.error("Failed to obtain IAM token", error);
+    throw error;
+  }
 }
 
 /**
@@ -36,7 +47,11 @@ async function callWatsonx(prompt, options = {}) {
   }
 
   if (!apiKey || !endpoint || !projectId) {
-    console.warn("[LLM Service] Missing credentials, using mock response");
+    logger.warn("Missing Watsonx credentials, using mock response", {
+      hasApiKey: !!apiKey,
+      hasEndpoint: !!endpoint,
+      hasProjectId: !!projectId,
+    });
     return {
       text: `Mock watsonx response for: ${finalPrompt.slice(0, 80)}...`,
     };
@@ -45,8 +60,16 @@ async function callWatsonx(prompt, options = {}) {
   try {
     const token = await getIAMToken(apiKey);
 
-    console.log(`[LLM Service] Calling model: ${model}`);
-    console.log(`[LLM Service] Prompt length: ${finalPrompt.length} chars`);
+    logger.info("Calling Watsonx API", {
+      model,
+      promptLength: finalPrompt.length,
+      maxNewTokens: options.maxNewTokens || 512,
+      temperature: options.temperature ?? 0.2,
+    });
+
+    logger.logExternalAPI("Watsonx", "/ml/v1/text/generation", "POST", {
+      model,
+    });
 
     const response = await axios.post(
       `${endpoint}/ml/v1/text/generation`,
@@ -71,18 +94,31 @@ async function callWatsonx(prompt, options = {}) {
     );
 
     const generatedText = response.data?.results?.[0]?.generated_text || "";
-    console.log(`[LLM Service] Generated ${generatedText.length} chars`);
+
+    logger.info("Watsonx API call successful", {
+      generatedLength: generatedText.length,
+      model,
+      tokenCount: response.data?.results?.[0]?.token_count,
+    });
 
     return {
       text: generatedText,
     };
   } catch (error) {
-    console.error(
-      "[LLM Service] Request failed:",
-      error.response?.data || error.message
-    );
+    logger.error("Watsonx API call failed", error, {
+      model,
+      endpoint,
+      errorData: error.response?.data,
+      statusCode: error.response?.status,
+    });
+
+    logger.warn("Using enhanced fallback analysis");
+
+    // Return empty string to trigger fallback in service layer
     return {
-      text: `Fallback response due to watsonx error: ${error.message}`,
+      text: "",
+      error: error.message,
+      usedFallback: true,
     };
   }
 }

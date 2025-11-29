@@ -12,6 +12,7 @@ const {
   applyRefactoring,
   getPredictions,
   generateTests,
+  executeTests,
   getMetrics,
   analyzeDeps,
   runBatchTests,
@@ -20,6 +21,7 @@ const {
   // File session management
   getSessionFiles,
   addSessionFile,
+  uploadSessionFile,
   removeSessionFile,
   getSessionFile,
   updateSessionFile,
@@ -46,6 +48,7 @@ router.post("/refactor", applyRefactoring);
 // Predictive suggestions endpoints
 router.post("/predictions", getPredictions);
 router.post("/generate-tests", generateTests);
+router.post("/execute-tests", executeTests);
 router.post("/metrics", getMetrics);
 router.post("/analyze-deps", analyzeDeps);
 
@@ -57,6 +60,7 @@ router.post("/batch/style-check", getStyleCompliance);
 // File session management endpoints
 router.get("/session/files", getSessionFiles);
 router.post("/session/files", addSessionFile);
+router.post("/session/files/upload", uploadSessionFile);
 router.delete("/session/files/:fileId", removeSessionFile);
 router.get("/session/files/:fileId", getSessionFile);
 router.put("/session/files/:fileId", updateSessionFile);

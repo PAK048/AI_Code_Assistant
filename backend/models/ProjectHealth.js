@@ -66,6 +66,15 @@ const ProjectHealthSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    projectId: { type: String, required: true, unique: true },
+    projectSource: {
+      type: String,
+      enum: ["upload", "github"],
+      default: "upload",
+    },
+    githubUrl: String,
+    localPath: String,
+    uploadedFiles: [String],
     projectPath: { type: String, required: true },
     projectName: String,
 
@@ -135,18 +144,18 @@ const ProjectHealthSchema = new mongoose.Schema(
     // AI recommendations
     recommendations: [
       {
-        type: String, // refactor, test, fix, optimize, document
-        priority: String, // critical, high, medium, low
-        filePath: String,
-        title: String,
-        description: String,
-        estimatedEffort: Number, // minutes
-        potentialImpact: String,
-        suggestedAction: String,
-        autoFixAvailable: Boolean,
+        type: { type: String }, // refactor, test, fix, optimize, document - wrapped to avoid Mongoose confusion
+        priority: { type: String }, // critical, high, medium, low
+        filePath: { type: String },
+        title: { type: String },
+        description: { type: String },
+        estimatedEffort: { type: Number }, // minutes
+        potentialImpact: { type: String },
+        suggestedAction: { type: String },
+        autoFixAvailable: { type: Boolean },
         createdAt: { type: Date, default: Date.now },
         status: { type: String, default: "pending" }, // pending, accepted, rejected, completed
-        appliedAt: Date,
+        appliedAt: { type: Date },
       },
     ],
 

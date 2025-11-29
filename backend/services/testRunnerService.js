@@ -2,7 +2,7 @@ const { exec } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 
-const SANDBOX_PATH = path.resolve(__dirname, "../../sandbox");
+const SANDBOX_PATH = path.resolve(__dirname, "../sandbox");
 
 /**
  * Execute tests for multiple files
@@ -13,7 +13,12 @@ const SANDBOX_PATH = path.resolve(__dirname, "../../sandbox");
 async function runMultiFileTests(filePaths, options = {}) {
   console.log(`[Test Runner] Running tests for ${filePaths.length} files`);
 
-  const { framework = "auto", coverage = true, verbose = false } = options;
+  const {
+    framework = "auto",
+    coverage = true,
+    verbose = false,
+    projectPath,
+  } = options;
 
   const results = [];
   let totalTests = 0;
@@ -26,6 +31,7 @@ async function runMultiFileTests(filePaths, options = {}) {
         framework,
         coverage,
         verbose,
+        projectPath,
       });
       results.push(result);
 
@@ -70,7 +76,7 @@ async function runMultiFileTests(filePaths, options = {}) {
 async function runSingleFileTest(filePath, options = {}) {
   console.log(`[Test Runner] Testing ${filePath}`);
 
-  const { framework, coverage, verbose } = options;
+  const { framework, coverage, verbose, projectPath } = options;
   const language = detectLanguage(filePath);
   const testFramework =
     framework === "auto" ? detectTestFramework(language) : framework;
@@ -96,27 +102,25 @@ async function runSingleFileTest(filePath, options = {}) {
     language
   );
 
-  return new Promise((resolve) => {
-    exec(
-      command,
-      { cwd: SANDBOX_PATH, timeout: 30000 },
-      (error, stdout, stderr) => {
-        const result = parseTestOutput(stdout, stderr, testFramework);
+  const cwd = projectPath || SANDBOX_PATH;
 
-        resolve({
-          filePath,
-          testFilePath,
-          success: !error && result.tests.failed === 0,
-          framework: testFramework,
-          language,
-          tests: result.tests,
-          coverage: result.coverage,
-          output: verbose ? stdout : null,
-          errors: error ? stderr : null,
-          duration: result.duration,
-        });
-      }
-    );
+  return new Promise((resolve) => {
+    exec(command, { cwd, timeout: 30000 }, (error, stdout, stderr) => {
+      const result = parseTestOutput(stdout, stderr, testFramework);
+
+      resolve({
+        filePath,
+        testFilePath,
+        success: !error && result.tests.failed === 0,
+        framework: testFramework,
+        language,
+        tests: result.tests,
+        coverage: result.coverage,
+        output: verbose ? stdout : null,
+        errors: error ? stderr : null,
+        duration: result.duration,
+      });
+    });
   });
 }
 

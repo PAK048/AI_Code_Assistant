@@ -1,7 +1,7 @@
 // Load environment variables FIRST before any other requires
 const dotenv = require("dotenv");
 const path = require("path");
-dotenv.config({ path: path.resolve(__dirname, "../.env") });
+dotenv.config({ path: path.resolve(__dirname, ".env") });
 
 const express = require("express");
 const http = require("http");
@@ -13,18 +13,31 @@ const projectHealthRoutes = require("./routes/projectHealthRoutes");
 const connectDB = require("./config/db");
 const { connectMongoDB } = require("./config/mongodb");
 const authService = require("./services/authService");
+const {
+  logger,
+  requestLoggerMiddleware,
+  errorLoggerMiddleware,
+} = require("./utils/logger");
 
 // Load .env from parent directory (root of project)
 
 const app = express();
 const server = http.createServer(app);
 
+// Log startup information
+logger.info("Starting CodeEcho Backend", {
+  nodeVersion: process.version,
+  platform: process.platform,
+  env: process.env.NODE_ENV || "development",
+  port: process.env.PORT || 5000,
+});
+
 // Configure CORS origins
 const allowedOrigins = process.env.FRONTEND_URL
   ? [process.env.FRONTEND_URL, "http://localhost:3000", "http://localhost:3001"]
   : ["*"];
 
-console.log("Allowed CORS origins:", allowedOrigins);
+logger.info("CORS Configuration", { allowedOrigins });
 
 const io = new Server(server, {
   cors: {
@@ -43,12 +56,24 @@ app.use(
 );
 app.use(express.json());
 
+// Request logging middleware
+app.use(requestLoggerMiddleware(logger));
+
 // Database Connections
 // connectDB(); // PostgreSQL - Not used, causing duplicate MongoDB connection
-connectMongoDB().then(() => {
-  // Initialize default user after MongoDB connection
-  authService.initializeDefaultUser().catch(console.error);
-}); // MongoDB for data management and insights
+logger.info("Connecting to MongoDB...");
+connectMongoDB()
+  .then(() => {
+    logger.info("MongoDB connected successfully");
+    // Initialize default user after MongoDB connection
+    return authService.initializeDefaultUser();
+  })
+  .then(() => {
+    logger.info("Default user initialized");
+  })
+  .catch((error) => {
+    logger.error("Database connection or initialization failed", error);
+  }); // MongoDB for data management and insights
 
 // Routes
 app.use("/api/agents", agentRoutes);
@@ -57,36 +82,63 @@ app.use("/api/project-health", projectHealthRoutes);
 
 // Health check endpoint for deployment verification
 app.get("/", (req, res) => {
-  res.json({
+  const response = {
     status: "ok",
     message: "CodeEcho Backend API is running",
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || "development",
-  });
+  };
+  logger.debug("Health check requested", response);
+  res.json(response);
 });
 
 app.get("/health", (req, res) => {
-  res.json({
+  const response = {
     status: "healthy",
     database: "connected",
     timestamp: new Date().toISOString(),
-  });
+  };
+  logger.debug("Detailed health check requested", response);
+  res.json(response);
 });
 
 // Socket.IO Connection
 io.on("connection", (socket) => {
-  console.log("User connected:", socket.id);
+  logger.info("WebSocket connection established", { socketId: socket.id });
 
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+    logger.info("WebSocket connection closed", { socketId: socket.id });
+  });
+
+  socket.on("error", (error) => {
+    logger.error("WebSocket error", error, { socketId: socket.id });
   });
 });
 
 // Make io accessible in routes
 app.set("io", io);
 
+// Error handling middleware (must be last)
+app.use(errorLoggerMiddleware(logger));
+
+// Handle unhandled promise rejections
+process.on("unhandledRejection", (reason, promise) => {
+  logger.error("Unhandled Promise Rejection", reason, {
+    promise: promise.toString(),
+  });
+});
+
+// Handle uncaught exceptions
+process.on("uncaughtException", (error) => {
+  logger.error("Uncaught Exception", error);
+  process.exit(1);
+});
+
 const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  logger.info(`Server started successfully`, {
+    port: PORT,
+    environment: process.env.NODE_ENV || "development",
+  });
 });

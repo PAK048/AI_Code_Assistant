@@ -1,79 +1,79 @@
 const express = require("express");
 const router = express.Router();
 const projectHealthController = require("../controllers/projectHealthController");
-const { authenticate } = require("../services/authService");
+const { optionalAuth } = require("../services/authService");
 
-// Analyze project
-router.post("/analyze", authenticate, projectHealthController.analyzeProject);
+// Analyze project (authentication optional)
+router.post("/analyze", optionalAuth, projectHealthController.analyzeProject);
 
-// Get project health
+// Get project health (authentication optional)
 router.get(
   "/health/:id",
-  authenticate,
+  optionalAuth,
   projectHealthController.getProjectHealth
 );
 router.get(
   "/health",
-  authenticate,
+  optionalAuth,
   projectHealthController.getProjectHealthByPath
 );
 
-// Get project overview/dashboard
+// Get project overview/dashboard (authentication optional)
 router.get(
   "/overview",
-  authenticate,
+  optionalAuth,
   projectHealthController.getProjectOverview
 );
 
-// File metrics
+// File metrics (authentication optional)
 router.get(
   "/file-metrics",
-  authenticate,
+  optionalAuth,
   projectHealthController.getFileMetrics
 );
 
-// Recommendations
+// Recommendations (authentication optional)
 router.get(
   "/recommendations",
-  authenticate,
+  optionalAuth,
   projectHealthController.getRecommendations
 );
 router.put(
   "/health/:id/recommendations/:index",
-  authenticate,
+  optionalAuth,
   projectHealthController.updateRecommendationStatus
 );
 router.post(
   "/health/:id/recommendations",
-  authenticate,
+  optionalAuth,
   projectHealthController.addRecommendation
 );
 
 // Test failures
 router.get(
   "/test-failures",
-  authenticate,
+  optionalAuth,
   projectHealthController.getTestFailures
 );
 
 // Code quality
 router.get(
   "/duplications",
-  authenticate,
+  optionalAuth,
   projectHealthController.getCodeDuplications
 );
-router.get("/call-graph", authenticate, projectHealthController.getCallGraph);
+router.get("/call-graph", optionalAuth, projectHealthController.getCallGraph);
 router.get(
   "/complexity-hotspots",
-  authenticate,
+  optionalAuth,
   projectHealthController.getComplexityHotspots
 );
 
 // Git/PR data
-router.get("/pending-prs", authenticate, projectHealthController.getPendingPRs);
+router.get("/pending-prs", optionalAuth, projectHealthController.getPendingPRs);
 router.get(
   "/branches",
-  authenticate,
+  optionalAuth,
   projectHealthController.getBranchesStatus
 );
 

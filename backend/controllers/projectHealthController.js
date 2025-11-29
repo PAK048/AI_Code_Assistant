@@ -5,16 +5,30 @@ const projectHealthService = require("../services/projectHealthService");
  */
 exports.analyzeProject = async (req, res) => {
   try {
-    const { projectPath, filePatterns } = req.body;
-    const userId = req.user.id;
+    const { projectPath, projectId, source, githubUrl, filePatterns } =
+      req.body;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
-    if (!projectPath) {
-      return res.status(400).json({ error: "Project path is required" });
+    if (!projectPath && !githubUrl) {
+      return res
+        .status(400)
+        .json({ error: "Project path or GitHub URL is required" });
     }
+
+    console.log(
+      `[ProjectHealthController] Analyzing project. Source: ${source}, GitHub: ${githubUrl}, Path: ${projectPath}`
+    );
 
     const projectHealth = await projectHealthService.analyzeProject(
       userId,
-      projectPath,
+      {
+        projectPath,
+        projectId,
+        source,
+        githubUrl,
+      },
       {
         filePatterns,
       }
@@ -54,21 +68,28 @@ exports.getProjectHealth = async (req, res) => {
 };
 
 /**
- * Get project health by path
+ * Get project health by path or ID
  */
 exports.getProjectHealthByPath = async (req, res) => {
   try {
-    const { projectPath } = req.query;
-    const userId = req.user.id;
+    const { projectPath, projectId } = req.query;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
-    if (!projectPath) {
-      return res.status(400).json({ error: "Project path is required" });
+    if (!projectPath && !projectId) {
+      return res.status(400).json({ error: "Project path or ID is required" });
     }
 
-    const projectHealth = await projectHealthService.getProjectHealthByPath(
-      userId,
-      projectPath
-    );
+    let projectHealth;
+    if (projectId) {
+      projectHealth = await projectHealthService.getProjectHealth(projectId);
+    } else {
+      projectHealth = await projectHealthService.getProjectHealthByPath(
+        userId,
+        projectPath
+      );
+    }
 
     if (!projectHealth) {
       return res.status(404).json({ error: "Project health not found" });
@@ -90,7 +111,9 @@ exports.getProjectHealthByPath = async (req, res) => {
 exports.getProjectOverview = async (req, res) => {
   try {
     const { projectPath } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,
@@ -159,7 +182,9 @@ exports.getProjectOverview = async (req, res) => {
 exports.getFileMetrics = async (req, res) => {
   try {
     const { projectPath, filePath } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,
@@ -206,7 +231,9 @@ exports.getFileMetrics = async (req, res) => {
 exports.getRecommendations = async (req, res) => {
   try {
     const { projectPath, priority, type, status } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,
@@ -273,7 +300,9 @@ exports.updateRecommendationStatus = async (req, res) => {
 exports.getTestFailures = async (req, res) => {
   try {
     const { projectPath } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,
@@ -314,7 +343,9 @@ exports.getTestFailures = async (req, res) => {
 exports.getCodeDuplications = async (req, res) => {
   try {
     const { projectPath } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,
@@ -343,7 +374,9 @@ exports.getCodeDuplications = async (req, res) => {
 exports.getCallGraph = async (req, res) => {
   try {
     const { projectPath, filePath } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,
@@ -378,7 +411,9 @@ exports.getCallGraph = async (req, res) => {
 exports.getPendingPRs = async (req, res) => {
   try {
     const { projectPath } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,
@@ -406,7 +441,9 @@ exports.getPendingPRs = async (req, res) => {
 exports.getBranchesStatus = async (req, res) => {
   try {
     const { projectPath } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,
@@ -459,7 +496,9 @@ exports.addRecommendation = async (req, res) => {
 exports.getComplexityHotspots = async (req, res) => {
   try {
     const { projectPath, limit = 10 } = req.query;
-    const userId = req.user.id;
+    const userId = req.user
+      ? req.user.userId || req.user.id || req.userId
+      : "default-user";
 
     const projectHealth = await projectHealthService.getProjectHealthByPath(
       userId,

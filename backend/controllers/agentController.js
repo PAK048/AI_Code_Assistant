@@ -12,7 +12,7 @@ const predictionService = require("../services/predictionService");
 const metricsService = require("../services/metricsService");
 const fileManagerService = require("../services/fileManagerService");
 
-const SANDBOX_PATH = path.resolve(__dirname, "../../sandbox");
+const SANDBOX_PATH = path.resolve(__dirname, "../sandbox");
 const COLLECTION = process.env.QDRANT_COLLECTION || "Hackathons"; // Updated to match .env
 
 // Ensure sandbox exists
@@ -977,6 +977,10 @@ exports.getPredictions = async (req, res) => {
  * Test Case Generation Handler
  * Generates comprehensive test cases for the code
  */
+/**
+ * Generate Tests Handler
+ * Creates test code using WatsonX with fallback to template-based generation
+ */
 exports.generateTests = async (req, res) => {
   const { filePath, code, testFramework } = req.body;
   const io = req.app.get("io");
@@ -986,13 +990,19 @@ exports.generateTests = async (req, res) => {
 
     if (!code) {
       return res.status(400).json({
+        success: false,
         error: "Missing required field: code",
+        message: "Please provide code to generate tests for",
       });
     }
 
-    io.emit("agent_update", { message: "Generating test cases..." });
+    io?.emit("agent_update", { message: "Generating test cases..." });
 
+    // Detect language from file extension
     const language = predictionService.detectLanguage(filePath || "unknown.js");
+    console.log(`[Test Generator] Detected language: ${language}`);
+
+    // Try WatsonX test generation with fallback
     const result = await predictionService.generateTestCases(
       code,
       language,
@@ -1000,25 +1010,223 @@ exports.generateTests = async (req, res) => {
     );
 
     if (!result.success) {
-      throw new Error(result.error);
+      console.error("[Test Generator] Test generation failed:", result.error);
+      throw new Error(result.error || "Test generation failed");
     }
 
-    console.log(`[Test Generator] Tests generated for ${result.framework}`);
-    io.emit("agent_update", { message: "Test cases ready!" });
+    console.log(
+      `[Test Generator] ✓ Tests generated successfully using ${
+        result.framework
+      }${result.usedFallback ? " (fallback)" : ""}`
+    );
+    io?.emit("agent_update", { message: "Test cases ready!" });
 
     res.json({
       success: true,
       testCode: result.testCode,
       framework: result.framework,
       language: result.language,
+      usedFallback: result.usedFallback || false,
     });
   } catch (error) {
     console.error("[Test Generator] Error:", error);
-    io.emit("agent_update", {
+    io?.emit("agent_update", {
       message: `Test generation error: ${error.message}`,
       type: "error",
     });
-    res.status(500).json({ error: error.message });
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message:
+        "Failed to generate tests. Please check your code and try again.",
+    });
+  }
+};
+
+/**
+ * Execute Tests Handler
+ * Runs the generated tests in a temporary file and returns structured results
+ */
+exports.executeTests = async (req, res) => {
+  const { testCode, framework } = req.body;
+  const io = req.app.get("io");
+  const fs = require("fs");
+  const path = require("path");
+  const { exec } = require("child_process");
+
+  let testFilePath = null;
+
+  try {
+    console.log(`[Test Executor] Running ${framework || "Jest"} tests`);
+
+    if (!testCode) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing required field: testCode",
+        message: "No test code provided to execute",
+      });
+    }
+
+    io?.emit("agent_update", { message: "Executing tests..." });
+
+    // Create /temp folder if missing
+    const tempDir = path.join(__dirname, "../temp");
+    if (!fs.existsSync(tempDir)) {
+      console.log(`[Test Executor] Creating temp directory: ${tempDir}`);
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    // Write generated tests to unique temp file
+    const timestamp = Date.now();
+    testFilePath = path.join(tempDir, `test_${timestamp}.test.js`);
+    console.log(`[Test Executor] Writing test file: ${testFilePath}`);
+    fs.writeFileSync(testFilePath, testCode, "utf8");
+
+    // Execute Jest with JSON output
+    const testFramework = framework || "Jest";
+    let command = "";
+
+    if (testFramework === "Jest" || testFramework.includes("Jest")) {
+      command = `npx jest "${testFilePath}" --json --testLocationInResults --no-coverage`;
+    } else if (testFramework === "Mocha") {
+      command = `npx mocha "${testFilePath}" --reporter json`;
+    } else {
+      // Default to Jest
+      command = `npx jest "${testFilePath}" --json --testLocationInResults --no-coverage`;
+    }
+
+    console.log(`[Test Executor] Executing: ${command}`);
+
+    exec(command, { cwd: tempDir, timeout: 30000 }, (error, stdout, stderr) => {
+      // Clean up temp file
+      try {
+        if (testFilePath && fs.existsSync(testFilePath)) {
+          fs.unlinkSync(testFilePath);
+          console.log(`[Test Executor] ✓ Cleaned up temp file`);
+        }
+      } catch (cleanupError) {
+        console.error("[Test Executor] Cleanup error:", cleanupError);
+      }
+
+      // Handle execution errors
+      if (error && !stdout) {
+        console.error("[Test Executor] Execution error:", error.message);
+
+        // Check if Jest is not installed
+        if (stderr && stderr.includes("jest: not found")) {
+          return res.json({
+            success: false,
+            error: "Jest is not installed",
+            message:
+              "Jest is not installed. Please run: npm install --save-dev jest",
+            stderr: stderr,
+          });
+        }
+
+        return res.json({
+          success: false,
+          error: error.message,
+          stderr: stderr,
+          message:
+            "Test execution failed. Check if Jest is installed and tests have no syntax errors.",
+        });
+      }
+
+      try {
+        // Parse Jest JSON output
+        let results = null;
+
+        if (stdout) {
+          try {
+            results = JSON.parse(stdout);
+            console.log(
+              `[Test Executor] ✓ Tests completed: ${
+                results.numPassedTests || 0
+              } passed, ${results.numFailedTests || 0} failed`
+            );
+          } catch (parseError) {
+            console.error("[Test Executor] JSON parse error:", parseError);
+            // Create minimal results structure
+            results = {
+              numTotalTests: 0,
+              numPassedTests: 0,
+              numFailedTests: 0,
+              numPendingTests: 0,
+              testResults: [],
+              success: false,
+              rawOutput: stdout,
+            };
+          }
+        } else {
+          results = {
+            numTotalTests: 0,
+            numPassedTests: 0,
+            numFailedTests: 0,
+            numPendingTests: 0,
+            testResults: [],
+            success: false,
+          };
+        }
+
+        // Build summary
+        const summary = {
+          total: results.numTotalTests || 0,
+          passed: results.numPassedTests || 0,
+          failed: results.numFailedTests || 0,
+          skipped: results.numPendingTests || 0,
+        };
+
+        io?.emit("agent_update", {
+          message: `Tests executed: ${summary.passed} passed, ${summary.failed} failed`,
+        });
+
+        // Return structured response
+        res.json({
+          success: true,
+          results: results,
+          summary: summary,
+          rawOutput: stdout,
+          stderr: stderr || null,
+          message:
+            summary.total === 0
+              ? "No tests were executed. Check test syntax."
+              : summary.failed === 0
+              ? `All ${summary.passed} tests passed!`
+              : `${summary.failed} test(s) failed`,
+        });
+      } catch (parseError) {
+        console.error("[Test Executor] Result parsing error:", parseError);
+        res.json({
+          success: false,
+          message: "Tests executed but results could not be parsed",
+          rawOutput: stdout,
+          stderr: stderr,
+          error: parseError.message,
+        });
+      }
+    });
+  } catch (error) {
+    console.error("[Test Executor] Error:", error);
+
+    // Clean up on error
+    try {
+      if (testFilePath && fs.existsSync(testFilePath)) {
+        fs.unlinkSync(testFilePath);
+      }
+    } catch (cleanupError) {
+      console.error("[Test Executor] Cleanup error:", cleanupError);
+    }
+
+    io?.emit("agent_update", {
+      message: `Test execution error: ${error.message}`,
+      type: "error",
+    });
+
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      message: "An unexpected error occurred during test execution",
+    });
   }
 };
 
@@ -1341,6 +1549,40 @@ exports.addSessionFile = async (req, res) => {
     });
   } catch (error) {
     console.error("[File Manager] Error adding file:", error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Upload a file with content (for drag-drop, paste, or upload)
+ */
+exports.uploadSessionFile = async (req, res) => {
+  const { name, content, language } = req.body;
+
+  try {
+    if (!name || !content) {
+      return res
+        .status(400)
+        .json({ error: "File name and content are required" });
+    }
+
+    // Create a virtual file path in a temp directory
+    const virtualPath = `uploaded/${name}`;
+
+    const file = await fileManagerService.addFile(virtualPath, content);
+
+    // Override language if provided
+    if (language) {
+      file.language = language;
+    }
+
+    res.json({
+      success: true,
+      file,
+      message: `File ${file.name} uploaded successfully`,
+    });
+  } catch (error) {
+    console.error("[File Manager] Error uploading file:", error);
     res.status(500).json({ error: error.message });
   }
 };

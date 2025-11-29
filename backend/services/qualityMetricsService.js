@@ -3,7 +3,7 @@ const path = require("path");
 const metricsService = require("./metricsService");
 const { callWatsonx } = require("./llmService");
 
-const SANDBOX_PATH = path.resolve(__dirname, "../../sandbox");
+const SANDBOX_PATH = path.resolve(__dirname, "../sandbox");
 
 /**
  * Calculate metrics for multiple files
